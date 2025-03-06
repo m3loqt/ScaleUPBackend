@@ -1,8 +1,18 @@
 from fastapi import FastAPI, File, UploadFile, Response, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
 
 app = FastAPI()
+
+# Configure CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Use specific origins in production (e.g., ["http://localhost:3000"])
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def home():
