@@ -1,14 +1,10 @@
 from fastapi import FastAPI, File, UploadFile, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import cv2
-import numpy as np
-import torch
-from Real_ESRGAN.realesrgan import RealESRGANer
-from Real_ESRGAN.realesrgan.archs.srvgg_arch import SRVGGNetCompact
+import requests
 
 app = FastAPI()
 
-# Add CORS middleware
+# Add CORS middleware so that requests from any origin are allowed
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,55 +13,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Real-ESRGAN
-model = RealESRGANer(
-    scale=4,  # Upscale factor
-    model_path="weights/realesr-general-x4v3.pth",
-    model=SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu'),
-    tile=0,  # Tile size (0 for no tiling)
-    tile_pad=10,
-    pre_pad=0,
-    half=False,  # Use FP16 (faster but less accurate)
-)
+# Your Stability API key – ideally, load from an environment variable.
+STABILITY_API_KEY = "sk-waClzCnCc5xPpk5PD6S0OdhcpVOA2qcy0njsnhf25w9Yy400"
 
 @app.post("/upscale")
 async def upscale(image: UploadFile = File(...)):
     try:
         print("Received request to upscale an image")
-
-        # Read image bytes
+        # Read the image bytes from the uploaded file
         contents = await image.read()
-        img_array = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
-        if img is None:
-            print("Error: Invalid image file")
-            raise HTTPException(status_code=400, detail="Invalid image file")
+        # Prepare the payload for the external upscaling API
+        files = {
+            "image": ("image.png", contents, image.content_type)
+        }
+        data = {
+            "prompt": "Enhance this image with clarity and detail",  # You can adjust the prompt as needed
+            "output_format": "png"
+        }
+        headers = {
+            "authorization": f"Bearer {STABILITY_API_KEY}",
+            "accept": "image/*"
+        }
 
-        # Resize image if it's too large
-        max_size = 1024  # Maximum dimension (width or height)
-        h, w = img.shape[:2]
-        if max(h, w) > max_size:
-            scale = max_size / max(h, w)
-            img = cv2.resize(img, (int(w * scale), int(h * scale)))
+        # External API endpoint from Stability
+        api_url = "https://api.stability.ai/v2beta/stable-image/upscale/conservative"
 
-        # Convert image to RGB (Real-ESRGAN expects RGB)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        # Upscale image using Real-ESRGAN
-        print("Upscaling image...")
-        output, _ = model.enhance(img, outscale=4)  # Upscale by 4x
-        print(f"Input image dimensions: {img.shape}")
-        print(f"Output image dimensions: {output.shape}")
-        print("Image successfully upscaled")
-
-        # Convert back to BGR for OpenCV
-        output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
-
-        # Convert image back to bytes
-        _, buffer = cv2.imencode(".png", output)
-        return Response(content=buffer.tobytes(), media_type="image/png")
+        # Make the POST request to the external API
+        response = requests.post(api_url, headers=headers, files=files, data=data)
+        
+        if response.status_code == 200:
+            print("Image successfully upscaled via external API")
+            return Response(content=response.content, media_type="image/png")
+        else:
+            # Print error details and raise HTTP exception if the external API did not return 200
+            print("Error response from external API:", response.json())
+            raise HTTPException(status_code=response.status_code, detail=response.json())
 
     except Exception as e:
         print(f"Error processing image: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
