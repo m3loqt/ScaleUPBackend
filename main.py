@@ -1,10 +1,12 @@
 from fastapi import FastAPI, File, UploadFile, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import requests
+import cv2
+import numpy as np
+import os
 
 app = FastAPI()
 
-# Add CORS middleware so that requests from any origin are allowed
+# Allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,43 +15,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Your Stability API key – ideally, load from an environment variable.
-STABILITY_API_KEY = "sk-waClzCnCc5xPpk5PD6S0OdhcpVOA2qcy0njsnhf25w9Yy400"
+# Create an OpenCV super-resolution instance
+sr = cv2.dnn_superres.DnnSuperResImpl_create()
+
+# Load the EDSR model from the weights folder
+model_path = "weights/EDSR_x4.pb"
+if not os.path.exists(model_path):
+    raise FileNotFoundError(f"Model file not found: {model_path}")
+
+sr.readModel(model_path)
+sr.setModel("edsr", 4)  # 4x upscaling
 
 @app.post("/upscale")
 async def upscale(image: UploadFile = File(...)):
     try:
         print("Received request to upscale an image")
-        # Read the image bytes from the uploaded file
         contents = await image.read()
+        img_array = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid image file")
 
-        # Prepare the payload for the external upscaling API
-        files = {
-            "image": ("image.png", contents, image.content_type)
-        }
-        data = {
-            "prompt": "Enhance this image with clarity and detail",  # You can adjust the prompt as needed
-            "output_format": "png"
-        }
-        headers = {
-            "authorization": f"Bearer {STABILITY_API_KEY}",
-            "accept": "image/*"
-        }
+        # Upscale the image using EDSR
+        output = sr.upsample(img)
+        print(f"Input image dimensions: {img.shape}")
+        print(f"Output image dimensions: {output.shape}")
 
-        # External API endpoint from Stability
-        api_url = "https://api.stability.ai/v2beta/stable-image/upscale/conservative"
-
-        # Make the POST request to the external API
-        response = requests.post(api_url, headers=headers, files=files, data=data)
-        
-        if response.status_code == 200:
-            print("Image successfully upscaled via external API")
-            return Response(content=response.content, media_type="image/png")
-        else:
-            # Print error details and raise HTTP exception if the external API did not return 200
-            print("Error response from external API:", response.json())
-            raise HTTPException(status_code=response.status_code, detail=response.json())
-
+        _, buffer = cv2.imencode(".png", output)
+        return Response(content=buffer.tobytes(), media_type="image/png")
     except Exception as e:
         print(f"Error processing image: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
