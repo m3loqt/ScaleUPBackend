@@ -6,50 +6,50 @@ import os
 
 app = FastAPI()
 
-# Allow cross-origin requests
+# Add CORSMiddleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],  # Allow all origins; modify for production if needed
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Additional middleware to ensure every response includes the CORS header
+@app.middleware("http")
+async def add_cors_header(request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 # Create an OpenCV super-resolution instance
 sr = cv2.dnn_superres.DnnSuperResImpl_create()
 
-# Load the EDSR model from the weights folder
+# Load the pre-trained EDSR model from the weights folder
 model_path = "weights/EDSR_x4.pb"
 if not os.path.exists(model_path):
     raise FileNotFoundError(f"Model file not found: {model_path}")
 
 sr.readModel(model_path)
-sr.setModel("edsr", 4)  # 4x upscaling
-
-# Root endpoint to verify the server is running
-@app.get("/")
-def home():
-    return {"message": "Server is running"}
+sr.setModel("edsr", 4)  # Set model to use EDSR with 4x upscaling
 
 @app.post("/upscale")
 async def upscale(image: UploadFile = File(...)):
     try:
         print("Received request to upscale an image")
+        # Read image bytes and decode into a numpy array
         contents = await image.read()
-        print(f"Image size: {len(contents)} bytes")
-
         img_array = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img is None:
-            print("Error: Invalid image file")
             raise HTTPException(status_code=400, detail="Invalid image file")
 
-        print(f"Input image dimensions: {img.shape}")
-
-        # Upscale the image using EDSR
+        # Upscale the image using the EDSR model
         output = sr.upsample(img)
+        print(f"Input image dimensions: {img.shape}")
         print(f"Output image dimensions: {output.shape}")
 
+        # Encode the output image as PNG and return it
         _, buffer = cv2.imencode(".png", output)
         return Response(content=buffer.tobytes(), media_type="image/png")
     except Exception as e:
