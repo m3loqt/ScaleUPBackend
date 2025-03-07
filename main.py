@@ -9,10 +9,10 @@ app = FastAPI()
 # Allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Create an OpenCV super-resolution instance
@@ -26,19 +26,28 @@ if not os.path.exists(model_path):
 sr.readModel(model_path)
 sr.setModel("edsr", 4)  # 4x upscaling
 
+# Root endpoint to verify the server is running
+@app.get("/")
+def home():
+    return {"message": "Server is running"}
+
 @app.post("/upscale")
 async def upscale(image: UploadFile = File(...)):
     try:
         print("Received request to upscale an image")
         contents = await image.read()
+        print(f"Image size: {len(contents)} bytes")
+
         img_array = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img is None:
+            print("Error: Invalid image file")
             raise HTTPException(status_code=400, detail="Invalid image file")
+
+        print(f"Input image dimensions: {img.shape}")
 
         # Upscale the image using EDSR
         output = sr.upsample(img)
-        print(f"Input image dimensions: {img.shape}")
         print(f"Output image dimensions: {output.shape}")
 
         _, buffer = cv2.imencode(".png", output)
